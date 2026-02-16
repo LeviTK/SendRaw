@@ -1,45 +1,35 @@
 # AGENTS.md
 
-## 项目说明
-- 项目类型: Calibre Interface Action 插件
-- 当前源码目录: `send_raw/`
-- 打包输出目录: `dist/`
-- 远程仓库: `origin` (`main` 分支)
+## 1. 仓库定位
+- 项目类型: Calibre Interface Action 插件（Send Raw to KOReader）
+- 源码目录: `send_raw/`
+- 文档目录: `doc/`
+- 本地产物目录: `dist/`
+- 远程仓库: `origin`（默认分支 `main`）
 
-## Calibre 插件打包规范
-- 安装包必须是 `.zip`。
-- `zip` 根目录必须直接包含 `__init__.py`。
-- 不能把源码目录名再包一层（错误示例: `send_raw/__init__.py` 在 zip 内作为首层路径）。
-- 不要把 `__pycache__/`、`*.pyc` 打进安装包。
-- 建议包含文件:
-  - `__init__.py`
-  - `ui.py`
-  - `config.py`
-  - `plugin-import-name-send_raw.txt`
+## 2. 规范入口（单一事实源）
+- 打包与安装规范: `doc/calibre-plugin-packaging.md`
+- 本文件只保留执行摘要；细则以 `doc/calibre-plugin-packaging.md` 为准。
 
-## 标准打包命令（本项目）
-```bash
-mkdir -p dist
-find send_raw -type d -name __pycache__ -prune -exec rm -rf {} +
-cd send_raw && zip -r ../dist/send_raw_v1.1.2.zip __init__.py config.py ui.py plugin-import-name-send_raw.txt -x "*/__pycache__/*" "*.pyc"
-```
+## 3. 开发与提交流程（摘要）
+1. 修改源码（主要是 `send_raw/*.py`）。
+2. 语法检查:
+   - `python3 -m py_compile send_raw/__init__.py send_raw/config.py send_raw/ui.py`
+3. 更新版本号:
+   - `send_raw/__init__.py` 中 `version = (...)`
+4. 按文档打包并校验:
+   - 参见 `doc/calibre-plugin-packaging.md`
+5. 在 Calibre 里安装 zip 验证。
+6. 提交并推送到 `origin/main`。
 
-## 打包校验
-- 使用以下命令确认 zip 根目录结构正确:
-```bash
-unzip -l dist/send_raw_v1.1.2.zip
-```
-- 校验通过标准:
-  - 列表中是 `__init__.py`、`ui.py` 等顶层文件
-  - 不出现 `send_raw/__init__.py`
-  - 不出现 `__pycache__` 或 `*.pyc`
+## 4. Git 规则
+- `dist/` 只作为本地打包产物，不提交到 Git。
+- `.superset/` 为本地目录，不提交到 Git。
+- 常规提交范围: `send_raw/*.py`、`doc/*.md`、`AGENTS.md`、`.gitignore`。
 
-## 发布前检查清单
-- 更新 `send_raw/__init__.py` 中 `version`。
-- 重新打包并执行 `unzip -l` 校验。
-- 在 Calibre 中通过“从文件加载插件”安装测试。
-
-## Git 同步规范
-- `dist/` 目录仅作为本地打包产物，不提交到 Git，不同步到远程。
-- `.superset/` 为本地目录，不提交到 Git，不同步到远程。
-- 远程同步默认只提交源码与文档（如 `send_raw/*.py`、`AGENTS.md`、`.gitignore`）。
+## 5. 发布规则（摘要）
+1. 确认 `main` 已包含目标提交。
+2. 创建并推送 tag（例如 `v1.1.2`）。
+3. 创建 GitHub Release（标题同 tag）。
+4. 上传 `dist/` 下对应 zip 作为 Release 资产。
+5. Release 备注使用中文 Markdown，简述修复点与资产名。
