@@ -13,7 +13,7 @@ class SendRawPlugin(InterfaceActionBase):
     description = "发送原始书籍文件到 KOReader，不注入元数据，保持 MD5 不变"
     supported_platforms = ["windows", "osx", "linux"]
     author = "C2KOReader"
-    version = (1, 1, 1)
+    version = (1, 1, 2)
     minimum_calibre_version = (5, 0, 0)
 
     actual_plugin = "calibre_plugins.send_raw.ui:SendRawAction"

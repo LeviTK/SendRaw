@@ -13,7 +13,6 @@ from qt.core import (
     QListWidget,
     QPushButton,
     QGroupBox,
-    QSpinBox,
     QCheckBox,
 )
 
@@ -22,10 +21,8 @@ from calibre.utils.config import JSONConfig
 prefs = JSONConfig("plugins/send_raw")
 
 prefs.defaults["preferred_formats"] = ["EPUB", "AZW3", "MOBI", "PDF", "CBZ", "CBR"]
-prefs.defaults["device_subdir"] = ""
 prefs.defaults["filename_template"] = "{author} - {title}"
 prefs.defaults["verify_md5"] = False
-prefs.defaults["timeout"] = 120
 
 
 class ConfigWidget(QWidget):
@@ -69,14 +66,6 @@ class ConfigWidget(QWidget):
         transfer_group = QGroupBox("传输设置")
         transfer_layout = QVBoxLayout(transfer_group)
 
-        # 设备子目录
-        subdir_layout = QHBoxLayout()
-        subdir_layout.addWidget(QLabel("设备子目录:"))
-        self.subdir_edit = QLineEdit()
-        self.subdir_edit.setPlaceholderText("留空使用设备默认路径")
-        subdir_layout.addWidget(self.subdir_edit)
-        transfer_layout.addLayout(subdir_layout)
-
         # 文件名模板
         template_layout = QHBoxLayout()
         template_layout.addWidget(QLabel("文件名模板:"))
@@ -88,16 +77,6 @@ class ConfigWidget(QWidget):
         transfer_layout.addWidget(
             QLabel("可用变量: {title}, {author}, {series}, {series_index}")
         )
-
-        # 超时设置
-        timeout_layout = QHBoxLayout()
-        timeout_layout.addWidget(QLabel("单本超时(秒):"))
-        self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(30, 600)
-        self.timeout_spin.setValue(120)
-        timeout_layout.addWidget(self.timeout_spin)
-        timeout_layout.addStretch()
-        transfer_layout.addLayout(timeout_layout)
 
         # MD5 校验
         self.verify_md5_cb = QCheckBox("启用 MD5 校验（确保文件完整性）")
@@ -124,10 +103,8 @@ class ConfigWidget(QWidget):
         self.format_list.clear()
         self.format_list.addItems(formats)
 
-        self.subdir_edit.setText(prefs.get("device_subdir", ""))
         self.template_edit.setText(prefs.get("filename_template", "{author} - {title}"))
-        self.timeout_spin.setValue(prefs.get("timeout", 120))
-        self.verify_md5_cb.setChecked(prefs.get("verify_md5", True))
+        self.verify_md5_cb.setChecked(prefs.get("verify_md5", False))
 
     def save_settings(self):
         formats = []
@@ -135,11 +112,9 @@ class ConfigWidget(QWidget):
             formats.append(self.format_list.item(i).text())
         prefs["preferred_formats"] = formats
 
-        prefs["device_subdir"] = self.subdir_edit.text().strip()
         prefs["filename_template"] = (
             self.template_edit.text().strip() or "{author} - {title}"
         )
-        prefs["timeout"] = self.timeout_spin.value()
         prefs["verify_md5"] = self.verify_md5_cb.isChecked()
 
     def add_format(self):

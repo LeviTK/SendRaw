@@ -91,7 +91,7 @@ class SmartDeviceTransport:
         self.device = device
         self._error_reports = []
 
-    def send_single_book(self, task):
+    def send_single_book(self, task, end_session=False):
         """
         发送单本书籍
         返回: (成功标志, 错误信息, 位置信息)
@@ -103,7 +103,7 @@ class SmartDeviceTransport:
                 [task["path"]],
                 [task["name"]],
                 on_card=None,
-                end_session=False,  # 保持会话，直到最后关闭
+                end_session=end_session,
                 metadata=[task["metadata"]],
             )
 
@@ -181,7 +181,8 @@ def send_raw_books_worker(tasks, device, abort, log, notifications):
         notifications.put((float(i) / total, f"正在发送 ({i + 1}/{total}): {title}"))
 
         # 发送书籍并获取返回的位置信息
-        is_ok, err_msg, location = transport.send_single_book(task)
+        is_last = i == total - 1
+        is_ok, err_msg, location = transport.send_single_book(task, end_session=is_last)
 
         if is_ok:
             success_titles.append(title)
@@ -428,7 +429,15 @@ class SendRawAction(InterfaceAction):
 
     def _sync_books_to_device(self, locations, metadata):
         """
-        将上传的书籍同步到设备的 booklist，确保 Calibre 界面实时显示
+        将上传的书籍同步到设备的 booklist，确保 Calibre 界面实时显示。
+        完全对齐 Calibre 原生 books_uploaded() 的逻辑：
+        1. add_books_to_metadata  — 更新内存 booklist
+        2. set_books_in_library   — 匹配 library，设置 in_library / application_id
+        3. upload_booklists       — 异步将 booklist 持久化到设备（不阻塞）
+        4. refresh_ondevice       — 立即刷新 library "On Device" 列（读内存）
+        5. view.resort/research   — 立即刷新设备视图（读内存）
+        注意: refresh_ondevice 和 resort/research 读的是内存 booklist，
+        不会从设备读取 metadata.calibre，因此可以在 upload_booklists 之前执行。
         """
         if not locations or not metadata:
             return
@@ -440,33 +449,79 @@ class SendRawAction(InterfaceAction):
 
             device = dm.device
 
-            # 获取设备的 booklists
-            # booklists 是一个三元组: (main_list, carda_list, cardb_list)
             booklists = self._get_booklists()
             if booklists is None:
                 return
 
-            # 调用设备驱动的 add_books_to_metadata 方法
-            # 这会将新书添加到 booklist 中
+            # Step 1: 更新内存中的 booklist（加入新上传的书）
             if hasattr(device, "add_books_to_metadata"):
                 device.add_books_to_metadata(locations, metadata, booklists)
+            else:
+                return
 
-            # 关键修复：必须调用 set_books_in_library 初始化新书的 in_library 属性
-            # 否则 GUI 刷新时会因访问不存在的属性而崩溃
+            # Step 2: 匹配 library 书籍，初始化 in_library / application_id
+            synced = False
             if hasattr(self.gui, "set_books_in_library"):
-                self.gui.set_books_in_library(
-                    booklists, reset=True, do_device_sync=False
-                )
+                try:
+                    synced = self.gui.set_books_in_library(
+                        booklists, reset=True, do_device_sync=False
+                    )
+                except TypeError:
+                    self.gui.set_books_in_library(booklists, reset=True)
 
-            # 刷新界面
-            self._refresh_device_views()
+            # Step 3: 异步将 booklist 写回设备 metadata.calibre（持久化）
+            if not synced and hasattr(self.gui, "upload_booklists"):
+                try:
+                    self.gui.upload_booklists()
+                except Exception:
+                    pass
+
+            # Step 4: 立即刷新 library 视图 "On Device" 标记
+            if hasattr(self.gui, "refresh_ondevice"):
+                self.gui.refresh_ondevice()
+
+            # Step 5: 刷新设备视图（与 Calibre books_uploaded 一致）
+            for view in (self.gui.memory_view, self.gui.card_a_view, self.gui.card_b_view):
+                try:
+                    view.model().resort(reset=False)
+                    view.model().research()
+                except Exception:
+                    pass
 
         except Exception as e:
-            print(f"Failed to sync books to device: {e}")
+            print(f"SendRaw: _sync_books_to_device failed: {e}")
             traceback.print_exc()
 
     def _get_booklists(self):
         """获取设备的 booklists"""
+        # 1) 首选主 GUI API，通常这是设备管理器维护的权威对象
+        try:
+            if hasattr(self.gui, "booklists"):
+                booklists = self.gui.booklists()
+                if (
+                    isinstance(booklists, (tuple, list))
+                    and len(booklists) == 3
+                    and booklists[0] is not None
+                ):
+                    return tuple(booklists)
+        except Exception as e:
+            print(f"Failed to get booklists from gui.booklists(): {e}")
+
+        # 2) 其次尝试设备管理器 API
+        try:
+            dm = getattr(self.gui, "device_manager", None)
+            if dm is not None and hasattr(dm, "booklists"):
+                booklists = dm.booklists()
+                if (
+                    isinstance(booklists, (tuple, list))
+                    and len(booklists) == 3
+                    and booklists[0] is not None
+                ):
+                    return tuple(booklists)
+        except Exception as e:
+            print(f"Failed to get booklists from device_manager.booklists(): {e}")
+
+        # 3) 最后退回到视图模型（兼容旧版本）
         try:
             # 从三个设备视图获取 booklist
             main_list = (
@@ -492,25 +547,6 @@ class SendRawAction(InterfaceAction):
 
         return None
 
-    def _refresh_device_views(self):
-        """刷新设备视图"""
-        try:
-            # 刷新三个设备视图
-            for view in (
-                self.gui.memory_view,
-                self.gui.card_a_view,
-                self.gui.card_b_view,
-            ):
-                if hasattr(view, "model") and view.model() is not None:
-                    view.model().resort(reset=False)
-                    view.model().research()
-
-            # 刷新库视图的 ondevice 列
-            if hasattr(self.gui, "refresh_ondevice"):
-                self.gui.refresh_ondevice()
-        except Exception as e:
-            print(f"Failed to refresh device views: {e}")
-
     def _get_smart_device(self):
         """获取已连接的 SmartDevice 设备"""
         dm = self.gui.device_manager
@@ -528,25 +564,6 @@ class SendRawAction(InterfaceAction):
             return None
 
         return device
-
-    def _refresh_device_books_full(self):
-        """
-        强制彻底刷新设备书籍列表。
-        通过调用 load_books_on_device 触发完整的设备扫描作业。
-        """
-        try:
-            dm = self.gui.device_manager
-            if dm is not None and hasattr(dm, "device") and dm.device is not None:
-                # 这是一个异步 Job，会重新读取设备上的 metadata.calibre 并刷新界面
-                dm.load_books_on_device(dm.device)
-        except Exception as e:
-            # 降级处理
-            try:
-                if hasattr(self.gui, "refresh_ondevice"):
-                    self.gui.refresh_ondevice()
-            except Exception:
-                pass
-            print(f"Failed to force reload device books: {e}")
 
     def cleanup_metadata_cache(self):
         """允许用户清理 .metadata.calibre 缓存文件"""
@@ -766,7 +783,7 @@ class SendRawAction(InterfaceAction):
             "preferred_formats", ["EPUB", "AZW3", "MOBI", "PDF"]
         )
         template = prefs.get("filename_template", "{author} - {title}")
-        verify_md5 = prefs.get("verify_md5", True)
+        verify_md5 = prefs.get("verify_md5", False)
 
         tasks = []
         failed = []
